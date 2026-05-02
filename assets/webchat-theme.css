@@ -1,0 +1,36 @@
+/*
+ * PeerTemp webchat theme — paste into Botpress Cloud Webchat → Custom CSS,
+ * or wire into dependencies.integrations.webchat.config when the integration
+ * exposes that field. Run `adk info webchat` to confirm the field name.
+ */
+
+.bpw-from-bot,
+.bpw-from-user,
+.bpw-composer,
+.bpw-keyboard-quick_reply {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 15px;
+}
+
+.bpw-from-bot {
+  background: rgba(124, 58, 237, 0.18);
+}
+
+.bpw-from-user {
+  background: rgba(30, 58, 138, 0.22);
+}
+
+.bpw-layout {
+  background: linear-gradient(135deg, #1e3a8a 0%, #7c3aed 100%);
+  color: #fff;
+}
+
+.bpw-header-container {
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}

@@ -36,3 +36,8 @@ logs/
 *.pid
 *.seed
 *.pid.lock
+
+# Local frontend env (contains PAT)
+apps/web/.env
+agent.json
+agent.local.json
