@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchOrgDashboard } from "../services/dashboard";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { fetchLeaderboard, fetchOrgDashboard } from "../services/dashboard";
 import { GlassCard } from "../components/glass/GlassCard";
 import { TempBadge } from "../components/temp/TempBadge";
+import { resolveDisplayName } from "../lib/demoTeam";
 
 export function OrgDashboard({
   orgId,
@@ -13,7 +14,30 @@ export function OrgDashboard({
   const { data, isPending, isError, error } = useQuery({
     queryKey: ["orgDashboard", orgId],
     queryFn: () => fetchOrgDashboard(orgId),
-    refetchInterval: 60_000,
+    refetchInterval: 8_000,
+  });
+
+  // Live average temperature per GC. The seeded `currentAvgTemperature` is a
+  // snapshot from when the GC was created — recomputing here keeps the
+  // dashboard in sync with the leaderboard / chat activity.
+  const gcIds = data?.groupChats.map((gc) => gc.conversationId) ?? [];
+  const leaderboards = useQueries({
+    queries: gcIds.map((id) => ({
+      queryKey: ["leaderboard", id],
+      queryFn: () => fetchLeaderboard(id),
+      refetchInterval: 6_000,
+      enabled: !!id,
+    })),
+  });
+  const avgByGc = new Map<string, number | undefined>();
+  gcIds.forEach((id, i) => {
+    const rows = leaderboards[i]?.data;
+    if (!rows || rows.length === 0) {
+      avgByGc.set(id, undefined);
+      return;
+    }
+    const sum = rows.reduce((acc, m) => acc + m.currentTemperature, 0);
+    avgByGc.set(id, sum / rows.length);
   });
 
   if (isPending)
@@ -50,11 +74,22 @@ export function OrgDashboard({
               </tr>
             </thead>
             <tbody>
-              {data.groupChats.map((gc) => (
+              {data.groupChats.map((gc) => {
+                const liveAvg = avgByGc.get(gc.conversationId);
+                const displayAvg = liveAvg ?? gc.currentAvgTemperature ?? 36.5;
+                return (
                 <tr key={String(gc.id ?? gc.conversationId)}>
                   <td>{gc.title}</td>
                   <td>
-                    <TempBadge temperature={gc.currentAvgTemperature ?? 36.5} />
+                    <TempBadge temperature={displayAvg} />
+                    {liveAvg === undefined && (
+                      <span
+                        className="muted"
+                        style={{ marginLeft: 8, fontSize: 11 }}
+                      >
+                        (loading)
+                      </span>
+                    )}
                   </td>
                   <td className="muted">{gc.status}</td>
                   <td>
@@ -66,7 +101,8 @@ export function OrgDashboard({
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -87,7 +123,7 @@ export function OrgDashboard({
               <tr key={`${m.userId}-${m.conversationId}`}>
                 <td>{i + 1}</td>
                 <td>
-                  <code>{m.userId.slice(0, 14)}</code>
+                  <strong>{resolveDisplayName(m.userId)}</strong>
                 </td>
                 <td className="muted">{m.conversationId.slice(0, 18)}</td>
                 <td>
@@ -108,11 +144,11 @@ export function OrgDashboard({
               <li key={i} style={{ marginBottom: 6, fontSize: 14 }}>
                 <code>{new Date(a.at).toLocaleString()}</code> ·{" "}
                 <strong>{a.action}</strong> by{" "}
-                <code>{a.actorUserId.slice(0, 10)}</code>
+                <strong>{resolveDisplayName(a.actorUserId)}</strong>
                 {a.target && (
                   <>
                     {" "}
-                    → <code>{String(a.target).slice(0, 14)}</code>
+                    → <code>{String(a.target).slice(0, 18)}</code>
                   </>
                 )}
               </li>

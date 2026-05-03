@@ -75,6 +75,7 @@ export const seedDemoData = new Action({
               at_risk: 0.4,
             },
             reviewSchedule: "monthly",
+            reviewAnchorDate: undefined,
             rules:
               "Be respectful. Communicate decisions in writing. Cite evidence over opinion. Async-first; sync when stuck.",
             rulesVersion: "1.0",
@@ -225,6 +226,7 @@ export const seedDemoData = new Action({
             links: gc.repo ? { github: gc.repo } : {},
             reviewSchedule: "inherit",
             startedAt: new Date(Date.now() - 21 * 86400_000).toISOString(),
+            closedAt: undefined,
           },
         ],
       });
@@ -271,9 +273,11 @@ export const seedDemoData = new Action({
         .map((m) => ({
           organizationId,
           userId: m.userId,
+          conversationId: undefined as string | undefined,
           acceptedAt: new Date(Date.now() - 17 * 86400_000).toISOString(),
           rulesVersion: "1.0",
           rulesSnapshot: "PeerTemp accountability charter — demo seed",
+          channel: undefined as string | undefined,
         }));
       if (consentRows.length > 0) {
         await ConsentRecordsTable.createRows({ rows: consentRows });
@@ -487,18 +491,23 @@ export const seedDemoData = new Action({
             : undefined;
         return {
           organizationId,
-          conversationId: t.gc,
-          assigneeUserId: t.assignee,
+          conversationId: t.gc as string,
+          assigneeUserId: t.assignee as string | undefined,
           assigneeInferred: false,
           title: t.title,
+          description: undefined as string | undefined,
+          confidence: undefined as number | undefined,
           difficulty: t.difficulty,
           urgency: t.urgency,
           estimatedHours: t.difficulty * 2,
           dueAt,
-          status: t.status as any,
+          status: t.status as "open" | "in_progress" | "done" | "blocked",
           completedAt,
-          completedOnTime: (t as any).onTime,
+          completedOnTime: (t as any).onTime as boolean | undefined,
           source: "chat" as const,
+          sourceMessageId: undefined as string | undefined,
+          sourceCommitSha: undefined as string | undefined,
+          sourceUrl: undefined as string | undefined,
         };
       });
       await TasksTable.createRows({ rows: taskRows });
@@ -555,12 +564,15 @@ export const seedDemoData = new Action({
     if (!(existingReviews as any[])[0]) {
       const reviewRows = reviewSeeds.map((r) => ({
         organizationId,
-        conversationId: r.gc,
-        reviewerUserId: r.reviewer,
-        revieweeUserId: r.reviewee,
-        reviewType: r.type as any,
+        conversationId: r.gc as string,
+        reviewerUserId: r.reviewer as string,
+        revieweeUserId: r.reviewee as string,
+        reviewType: r.type as "peer" | "leader",
         temperatureRating: r.rating,
         justification: r.why,
+        taskId: undefined as string | undefined,
+        periodStart: undefined as string | undefined,
+        periodEnd: undefined as string | undefined,
         occurredAt: new Date(Date.now() - 2 * 86400_000).toISOString(),
       }));
       await ReviewsTable.createRows({ rows: reviewRows });
@@ -585,6 +597,8 @@ export const seedDemoData = new Action({
             requesterTemperature: 35.9,
             status: "pending",
             justification: "Want to help with QA — happy to start small.",
+            decidedBy: undefined,
+            decidedAt: undefined,
             requestedAt: new Date(Date.now() - 6 * 3600_000).toISOString(),
           },
         ],

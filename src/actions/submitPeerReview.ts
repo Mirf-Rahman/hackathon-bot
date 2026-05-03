@@ -30,6 +30,8 @@ export const submitPeerReview = new Action({
           temperatureRating: input.temperatureRating,
           justification: input.justification,
           taskId: input.taskId,
+          periodStart: undefined,
+          periodEnd: undefined,
           occurredAt,
         },
       ],

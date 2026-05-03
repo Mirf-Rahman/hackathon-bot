@@ -97,6 +97,12 @@ export default new Conversation({
         // fall back to defaults
       }
 
+      const send = (text: string) =>
+        (conversation.send as any)({
+          type: "text",
+          payload: { text },
+        });
+
       if (looksLikeAgreement) {
         await ConsentRecordsTable.createRows({
           rows: [
@@ -107,30 +113,24 @@ export default new Conversation({
               acceptedAt: new Date().toISOString(),
               rulesVersion,
               rulesSnapshot: charterMd,
+              channel: undefined,
             },
           ],
         });
         user.state.hasConsented = true;
         if (organizationId) user.state.activeOrganizationId = organizationId;
         user.state.activeConversationId = conversationId;
-        await conversation.send({
-          type: "text",
-          payload: {
-            text: "Consent recorded. You're starting at **36.5°C**. Tell me about a task, ask to join a group chat, or report what you finished — I'll handle the bookkeeping.",
-          },
-        });
+        await send(
+          "Consent recorded. You're starting at **36.5°C**. Tell me about a task, ask to join a group chat, or report what you finished — I'll handle the bookkeeping.",
+        );
         return;
       }
 
-      await conversation.send({
-        type: "text",
-        payload: {
-          text:
-            "Welcome to PeerTemp. Before I start tracking anything, please review:\n\n" +
-            charterMd +
-            '\n\nReply **"I agree"** to consent and start, or anything else to keep this read-only.',
-        },
-      });
+      await send(
+        "Welcome to PeerTemp. Before I start tracking anything, please review:\n\n" +
+          charterMd +
+          '\n\nReply **"I agree"** to consent and start, or anything else to keep this read-only.',
+      );
       return;
     }
 
@@ -157,9 +157,13 @@ export default new Conversation({
           conversationId,
           organizationId,
           senderUserId: userId,
+          senderDisplayName:
+            (user.state as any).displayName ?? undefined,
+          text,
           postedAt: new Date().toISOString(),
           professionalism: label as any,
           meaningful,
+          responseToMs: undefined,
         },
       ],
     });

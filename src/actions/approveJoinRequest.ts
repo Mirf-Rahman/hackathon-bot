@@ -34,6 +34,7 @@ export const approveJoinRequest = new Action({
           organizationId: req.organizationId,
           userId: req.userId,
           workRole: "other",
+          leaderFlag: false,
           joinedAt: decidedAt,
           status: "active",
         },

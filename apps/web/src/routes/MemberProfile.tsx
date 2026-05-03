@@ -3,6 +3,9 @@ import { fetchMemberProfile } from "../services/members";
 import { GlassCard } from "../components/glass/GlassCard";
 import { TempBadge } from "../components/temp/TempBadge";
 import { TempTrendChart } from "../components/temp/TempTrendChart";
+import { ActivityHeatmap } from "../components/temp/ActivityHeatmap";
+import { Thermometer } from "../components/temp/Thermometer";
+import { resolveDisplayName } from "../lib/demoTeam";
 
 export function MemberProfile({
   userId,
@@ -23,17 +26,37 @@ export function MemberProfile({
 
   return (
     <>
-      <GlassCard
-        title={`Member ${userId.slice(0, 16)}`}
-        footer={`Current temperature: ${data.currentTemperature.toFixed(2)}°C`}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) 1fr",
+          gap: 16,
+          alignItems: "stretch",
+        }}
       >
-        <div className="row">
-          <TempBadge temperature={data.currentTemperature} />
-          <span className="muted">
-            {data.events.length} events · {data.tasks.length} tasks ·{" "}
-            {data.reviews.length} reviews
-          </span>
-        </div>
+        <Thermometer
+          value={data.currentTemperature}
+          label={resolveDisplayName(userId)}
+          sublabel={`${data.events.length} events · ${data.tasks.length} tasks · ${data.reviews.length} reviews`}
+        />
+        <GlassCard
+          title="At a glance"
+          footer={`userId ${userId}`}
+        >
+          <div className="row" style={{ marginBottom: 12 }}>
+            <TempBadge temperature={data.currentTemperature} />
+          </div>
+          <div className="muted" style={{ fontSize: 13, lineHeight: 1.55 }}>
+            Each event below shows what nudged the temperature and by how much.
+            Recent reviews and tasks contribute the largest weighted moves; the
+            decay workflow drifts inactive members down by a small amount each
+            hour.
+          </div>
+        </GlassCard>
+      </div>
+
+      <GlassCard title="Activity heatmap">
+        <ActivityHeatmap events={data.events} />
       </GlassCard>
 
       <GlassCard title="Temperature trend">

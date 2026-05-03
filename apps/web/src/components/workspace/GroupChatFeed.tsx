@@ -5,6 +5,18 @@ import {
   postGcMessage,
   type GcMessage,
 } from "../../services/groupChat";
+import { logTemperatureEvent } from "../../services/temperature";
+import { useAuthStore } from "../../stores/authStore";
+import { resolveDisplayName } from "../../lib/demoTeam";
+import { ensureConversation, getChatClient } from "../../lib/chatClient";
+import { env } from "../../lib/env";
+import {
+  scoreText,
+  deltaCopy,
+  toneColor,
+  toneIcon,
+  intentLabel,
+} from "../../lib/tone";
 
 const PALETTE = [
   "#60a5fa",
@@ -36,42 +48,93 @@ function initials(name: string): string {
 
 /**
  * Multi-author group chat feed for a GC. Reads from the bot's MessagesTable
- * via `listGcMessages`. Posting writes through `postGcMessage` so the user's
- * line shows up alongside seeded teammates. The right-side dock remains the
- * private 1:1 with the PeerTemp bot (task extraction, reviews, etc).
+ * via `listGcMessages`. On send we (a) immediately persist via the
+ * `postGcMessage` action so the row shows up alongside seeded teammates, and
+ * (b) — if the chat integration is configured — also pipe the same text into
+ * the bot's chat conversation so the AI scores tone, extracts tasks, and
+ * updates temperature in real time.
  */
 export function GroupChatFeed({
   conversationId,
   orgId,
-  meUserId = "user_demo_you",
-  meDisplayName = "You",
 }: {
   conversationId: string;
   orgId: string;
-  meUserId?: string;
-  meDisplayName?: string;
 }) {
+  const me = useAuthStore((s) => s.user);
+  const meUserId = me?.userId ?? "user_anonymous";
+  const meDisplayName = me?.displayName ?? "You";
+
   const qc = useQueryClient();
   const { data, isPending, isError, error } = useQuery({
     queryKey: ["gcMessages", conversationId],
     queryFn: () => listGcMessages(conversationId),
-    refetchInterval: 8_000,
+    refetchInterval: 4_000,
   });
 
   const send = useMutation({
-    mutationFn: (text: string) =>
-      postGcMessage({
+    mutationFn: async (text: string) => {
+      // 1. Persist immediately so it's visible in the feed.
+      await postGcMessage({
         conversationId,
         organizationId: orgId,
         senderUserId: meUserId,
         senderDisplayName: meDisplayName,
         text,
-      }),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["gcMessages", conversationId] }),
+      });
+
+      // 2. Move the temperature so the leaderboard reflects the post within
+      //    the next refetch cycle. We log directly via the
+      //    `logTemperatureEvent` action so this works whether or not the
+      //    chat integration is reachable.
+      const preview = scoreText(text);
+      if (preview.delta !== 0) {
+        try {
+          await logTemperatureEvent({
+            userId: meUserId,
+            organizationId: orgId,
+            conversationId,
+            delta: preview.delta,
+            reason: preview.reason,
+            sourceType: "language",
+          });
+        } catch {
+          // Non-fatal — leaderboard simply won't move on this turn.
+        }
+      }
+
+      // 3. Best-effort: also forward to the bot via the chat integration so
+      //    the conversation router runs (scoreLanguage, tools, decay etc.).
+      if (env.chatApiUrl) {
+        try {
+          const { conversationId: cid, client } = await ensureConversation(
+            `peertemp-gc-${conversationId}`,
+          );
+          await client.createMessage({
+            conversationId: cid,
+            payload: { type: "text", text },
+          } as any);
+        } catch {
+          // Non-fatal; message is already in MessagesTable.
+        }
+      }
+    },
+    onSuccess: () => {
+      // Refresh both the message feed AND the leaderboard / member profile
+      // so the temperature change is visible immediately.
+      qc.invalidateQueries({ queryKey: ["gcMessages", conversationId] });
+      qc.invalidateQueries({ queryKey: ["leaderboard", conversationId] });
+      qc.invalidateQueries({ queryKey: ["memberProfile", meUserId] });
+      qc.invalidateQueries({ queryKey: ["orgDashboard"] });
+    },
   });
 
   const [input, setInput] = useState("");
+  const [lastDelta, setLastDelta] = useState<{
+    delta: number;
+    reason: string;
+    at: number;
+  } | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -79,7 +142,24 @@ export function GroupChatFeed({
     if (el) el.scrollTop = el.scrollHeight;
   }, [data?.length]);
 
+  // Auto-clear the post-send toast after 2.5s
+  useEffect(() => {
+    if (!lastDelta) return;
+    const id = window.setTimeout(() => setLastDelta(null), 2500);
+    return () => window.clearTimeout(id);
+  }, [lastDelta]);
+
   const grouped = useMemo(() => groupConsecutive(data ?? []), [data]);
+  const preview = input.trim() ? scoreText(input) : null;
+
+  const submit = (raw?: string) => {
+    const t = (raw ?? input).trim();
+    if (!t) return;
+    const scored = scoreText(t);
+    setInput("");
+    setLastDelta({ delta: scored.delta, reason: scored.reason, at: Date.now() });
+    send.mutate(t);
+  };
 
   return (
     <section
@@ -104,7 +184,7 @@ export function GroupChatFeed({
         <span style={{ fontSize: 18 }}>#</span>
         <strong style={{ flex: 1 }}>{conversationId}</strong>
         <span className="muted" style={{ fontSize: 12 }}>
-          {data?.length ?? 0} messages
+          {data?.length ?? 0} messages · posting as <strong>{meDisplayName}</strong>
         </span>
       </header>
 
@@ -139,39 +219,91 @@ export function GroupChatFeed({
           padding: 12,
           borderTop: "1px solid rgba(255,255,255,0.1)",
           display: "flex",
+          flexDirection: "column",
           gap: 8,
+          position: "relative",
         }}
       >
-        <input
-          className="input"
-          placeholder={`Message #${conversationId}`}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && input.trim()) {
-              e.preventDefault();
-              const t = input.trim();
-              setInput("");
-              send.mutate(t);
-            }
-          }}
-        />
-        <button
-          className="btn btn-primary"
-          disabled={send.isPending || !input.trim()}
-          onClick={() => {
-            const t = input.trim();
-            if (!t) return;
-            setInput("");
-            send.mutate(t);
-          }}
-        >
-          Send
-        </button>
+        {lastDelta && (
+          <div
+            className={`tone-toast tone-toast--${lastDelta.delta >= 0 ? "up" : "down"}`}
+          >
+            {lastDelta.delta >= 0 ? "▲ +" : "▼ "}
+            {lastDelta.delta.toFixed(2)}°C · {lastDelta.reason}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            className="input"
+            placeholder={`Message #${conversationId} as ${meDisplayName}`}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && input.trim()) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+          />
+          <button
+            className="btn btn-primary"
+            disabled={send.isPending || !input.trim()}
+            onClick={() => submit()}
+          >
+            {send.isPending ? "Sending…" : "Send"}
+          </button>
+        </div>
+        <div className="tone-preview" aria-live="polite">
+          {preview ? (
+            <div className="tone-row">
+              <span
+                className="tone-chip"
+                style={{
+                  background: `${toneColor(preview.tone)}22`,
+                  borderColor: `${toneColor(preview.tone)}66`,
+                  color: toneColor(preview.tone),
+                }}
+                title={preview.reason}
+              >
+                <span aria-hidden>{toneIcon(preview.tone)}</span>
+                <strong>{deltaCopy(preview.delta)}</strong>
+              </span>
+              <span className="tone-signals">
+                {preview.signals.length === 0 ? (
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    {preview.reason}
+                  </span>
+                ) : (
+                  preview.signals.slice(0, 3).map((s, i) => (
+                    <span
+                      key={i}
+                      className={`tone-tag ${s.delta >= 0 ? "tone-tag--pos" : "tone-tag--neg"}`}
+                      title={s.reason}
+                    >
+                      {intentLabel(s.intent)}
+                      <span style={{ opacity: 0.7, marginLeft: 4 }}>
+                        {s.delta >= 0 ? "+" : ""}
+                        {s.delta.toFixed(2)}
+                      </span>
+                    </span>
+                  ))
+                )}
+              </span>
+            </div>
+          ) : (
+            <span className="muted" style={{ fontSize: 11 }}>
+              Tip: commitments, completions, and substantive updates raise
+              your °C; complaints, lazy acks, and rude language drop it.
+            </span>
+          )}
+        </div>
       </footer>
     </section>
   );
 }
+
+// Pre-warm the chat client lazily so the very first send is snappy.
+void getChatClient;
 
 type Group = {
   key: string;
@@ -197,7 +329,7 @@ function groupConsecutive(msgs: GcMessage[]): Group[] {
       out.push({
         key: `${m.senderUserId}-${m.postedAt}`,
         senderUserId: m.senderUserId,
-        senderDisplayName: m.senderDisplayName ?? m.senderUserId,
+        senderDisplayName: resolveDisplayName(m.senderUserId, m.senderDisplayName),
         postedAt: m.postedAt,
         messages: [m],
       });
@@ -229,7 +361,14 @@ function MessageGroup({ group, meUserId }: { group: Group; meUserId: string }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <strong style={{ fontSize: 14 }}>{group.senderDisplayName}</strong>
+          <strong style={{ fontSize: 14 }}>
+            {group.senderDisplayName}
+            {isMe && (
+              <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                (you)
+              </span>
+            )}
+          </strong>
           <span className="muted" style={{ fontSize: 11 }}>
             {new Date(group.postedAt).toLocaleString([], {
               month: "short",

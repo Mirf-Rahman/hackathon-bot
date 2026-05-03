@@ -1,10 +1,10 @@
-import { Action, z } from "@botpress/runtime";
+import { Action, actions, z } from "@botpress/runtime";
 import { MessagesTable } from "../tables/Messages";
 
 /**
- * Append a message to a group-chat feed from the UI (the "you" persona).
- * Tone is left undefined — the bot's existing scoreLanguage flow can fill it
- * later if needed. Used by the React GroupChatFeed input box.
+ * Append a message to a group-chat feed from the UI. Best-effort tone scoring
+ * via the bot's `scoreLanguage` action so the message renders with proper
+ * coloring + tracks meaningfulness right away.
  */
 export const postGcMessage = new Action({
   name: "postGcMessage",
@@ -20,6 +20,19 @@ export const postGcMessage = new Action({
   output: z.object({ ok: z.boolean(), postedAt: z.string() }),
   async handler({ input }) {
     const postedAt = new Date().toISOString();
+
+    let professionalism: string | undefined;
+    let meaningful: boolean | undefined;
+    try {
+      const lang = (await (actions as any).scoreLanguage({
+        text: input.text,
+      })) as { label?: string; meaningful?: boolean };
+      professionalism = lang?.label;
+      meaningful = lang?.meaningful;
+    } catch {
+      // ignore — keep undefined
+    }
+
     await MessagesTable.createRows({
       rows: [
         {
@@ -29,6 +42,9 @@ export const postGcMessage = new Action({
           senderDisplayName: input.senderDisplayName ?? "You",
           text: input.text,
           postedAt,
+          professionalism: professionalism as any,
+          meaningful,
+          responseToMs: undefined,
         },
       ],
     });

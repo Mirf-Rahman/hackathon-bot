@@ -45,8 +45,12 @@ export const assignTask = new Action({
           urgency: input.urgency,
           dueAt: input.dueAt,
           status: "open",
+          completedAt: undefined,
+          completedOnTime: undefined,
           source: "chat",
           sourceMessageId: input.sourceMessageId,
+          sourceCommitSha: undefined,
+          sourceUrl: undefined,
         },
       ],
     });

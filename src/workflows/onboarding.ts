@@ -28,7 +28,9 @@ export const onboarding = new Workflow({
     organizationId: z.string().optional(),
     conversationId: z.string().optional(),
   }),
-  async handler({ input, step, request }) {
+  async handler(props) {
+    const { input, step } = props;
+    const request = (props as any).request;
     const userId = (user as any).id ?? "unknown";
 
     // Step 1 — show charter
@@ -41,7 +43,7 @@ export const onboarding = new Workflow({
 
     // Step 2 — ask for consent
     const consent = await step("consent", async () => {
-      const answer = await request.workflow.provide("consent_answer", {
+      const answer = await request?.workflow?.provide?.("consent_answer", {
         prompt:
           "Before PeerTemp tracks anything, please review the accountability charter and confirm.\n\n" +
           markdown +
@@ -69,6 +71,7 @@ export const onboarding = new Workflow({
             acceptedAt: new Date().toISOString(),
             rulesVersion,
             rulesSnapshot: markdown,
+            channel: undefined,
           },
         ],
       });

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { env } from "../../lib/env";
 import { ensureConversation, getChatClient } from "../../lib/chatClient";
+import { useAuthStore } from "../../stores/authStore";
 
 type Msg = {
   id: string;
@@ -11,13 +12,14 @@ type Msg = {
 
 /**
  * Real in-app chat with the PeerTemp bot. Uses the bot's `chat` integration
- * webhook (no iframe). Each GC route gets its own conversation, mirroring
- * the platform's group-chat model. The bot's consent gate runs on first
- * message just like in the CLI.
+ * webhook (no iframe). Each route gets its own conversation, mirroring the
+ * platform's group-chat model. The bot's consent gate runs on first message.
  */
 export function ChatPanel({ conversationId }: { conversationId?: string }) {
+  const me = useAuthStore((s) => s.user);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<
     "idle" | "connecting" | "ready" | "error"
   >("connecting");
@@ -51,7 +53,6 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
         if (cancelled) return;
         setConvId(cid);
 
-        // Load existing messages
         const { messages: history } = await client.listMessages({
           conversationId: cid,
         } as any);
@@ -67,11 +68,8 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
             .map(toMsg),
         );
 
-        // Live updates via signal listener (server-sent events)
         try {
-          listener = await client.listenConversation({
-            id: cid,
-          } as any);
+          listener = await client.listenConversation({ id: cid } as any);
           listener.on("message_created", (ev: any) => {
             if (cancelled) return;
             const m = toMsg(ev.data ?? ev);
@@ -108,8 +106,9 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
 
   async function send() {
     const text = input.trim();
-    if (!text || !convId || status !== "ready") return;
+    if (!text || !convId || status !== "ready" || sending) return;
     setInput("");
+    setSending(true);
     const optimistic: Msg = {
       id: `tmp-${Date.now()}`,
       authorIsBot: false,
@@ -125,7 +124,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
         payload: { type: "text", text },
       } as any);
       // Pull bot reply if listener didn't deliver within 3s
-      setTimeout(async () => {
+      window.setTimeout(async () => {
         try {
           const { messages: latest } = await client.listMessages({
             conversationId: convId,
@@ -146,81 +145,77 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
       }, 3000);
     } catch (e: any) {
       setError(e?.message ?? String(e));
+    } finally {
+      setSending(false);
     }
   }
 
+  const meName = me?.displayName ?? "You";
+  const meInitials = initials(meName);
+
   return (
-    <section
-      className="glass card"
-      style={{
-        padding: 0,
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 560,
-        maxHeight: "78vh",
-      }}
-    >
-      <header
-        style={{
-          padding: "14px 18px",
-          borderBottom: "1px solid rgba(255,255,255,0.1)",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <span style={{ fontSize: 18 }}>💬</span>
-        <strong style={{ flex: 1 }}>PeerTemp chat</strong>
-        <span className="muted" style={{ fontSize: 12 }}>
+    <section className="cp">
+      <header className="cp-header">
+        <span className="cp-logo" aria-hidden>
+          🌡️
+        </span>
+        <div className="cp-header-meta">
+          <strong className="cp-title">PeerTemp</strong>
+          <span className="cp-subtitle">
+            Private 1:1 · {conversationId ?? "lobby"}
+          </span>
+        </div>
+        <span className={`cp-status cp-status--${status}`}>
+          <span className="cp-status-dot" />
           {status === "ready"
-            ? "live"
+            ? "Live"
             : status === "connecting"
-              ? "connecting…"
-              : status}
+              ? "Connecting…"
+              : status === "error"
+                ? "Offline"
+                : "Idle"}
         </span>
       </header>
 
-      <div
-        ref={scrollerRef}
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: 16,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
+      <div ref={scrollerRef} className="cp-feed">
         {status === "connecting" && (
-          <div className="muted">Connecting to PeerTemp…</div>
+          <div className="cp-empty">Connecting to PeerTemp…</div>
         )}
         {status === "error" && (
-          <div className="banner">{error ?? "Unable to connect."}</div>
+          <div className="cp-error">{error ?? "Unable to connect."}</div>
         )}
         {status === "ready" && messages.length === 0 && (
-          <div className="muted">
+          <div className="cp-empty">
             Say hi to start — PeerTemp will walk you through consent on the
             first message.
           </div>
         )}
         {messages.map((m) => (
-          <Bubble key={m.id} msg={m} />
+          <Bubble
+            key={m.id}
+            msg={m}
+            meName={meName}
+            meInitials={meInitials}
+          />
         ))}
       </div>
 
-      <footer
-        style={{
-          padding: 12,
-          borderTop: "1px solid rgba(255,255,255,0.1)",
-          display: "flex",
-          gap: 8,
-        }}
-      >
-        <input
-          className="input"
-          placeholder={status === "ready" ? "Type a message…" : "Connecting…"}
+      <footer className="cp-footer">
+        <textarea
+          className="cp-input"
+          placeholder={
+            status === "ready"
+              ? "Type a message… (Enter to send · Shift+Enter for newline)"
+              : "Connecting…"
+          }
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          rows={1}
+          onChange={(e) => {
+            setInput(e.target.value);
+            const el = e.target as HTMLTextAreaElement;
+            el.style.height = "auto";
+            el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -230,11 +225,13 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
           disabled={status !== "ready"}
         />
         <button
-          className="btn btn-primary"
+          className="cp-send"
           onClick={send}
-          disabled={status !== "ready" || !input.trim()}
+          disabled={status !== "ready" || sending || !input.trim()}
+          title="Send (Enter)"
+          aria-label="Send"
         >
-          Send
+          {sending ? "…" : "→"}
         </button>
       </footer>
     </section>
@@ -257,32 +254,43 @@ function toMsg(raw: any): Msg {
   };
 }
 
-function Bubble({ msg }: { msg: Msg }) {
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((p) => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+function Bubble({
+  msg,
+  meName,
+  meInitials,
+}: {
+  msg: Msg;
+  meName: string;
+  meInitials: string;
+}) {
   const isBot = msg.authorIsBot;
+  const time = new Date(msg.createdAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
   return (
-    <div
-      style={{
-        alignSelf: isBot ? "flex-start" : "flex-end",
-        maxWidth: "80%",
-        background: isBot
-          ? "rgba(124, 58, 237, 0.22)"
-          : "rgba(37, 99, 235, 0.28)",
-        border: "1px solid rgba(255,255,255,0.18)",
-        padding: "8px 12px",
-        borderRadius: 14,
-        whiteSpace: "pre-wrap",
-        fontSize: 14,
-        lineHeight: 1.45,
-      }}
-    >
-      <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>
-        {isBot ? "PeerTemp" : "you"} ·{" "}
-        {new Date(msg.createdAt).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
+    <div className={`cp-msg ${isBot ? "cp-msg--bot" : "cp-msg--me"}`}>
+      <div className="cp-msg-avatar" aria-hidden>
+        {isBot ? "🌡️" : meInitials}
       </div>
-      {msg.text}
+      <div className="cp-msg-body">
+        <div className="cp-msg-meta">
+          <strong>{isBot ? "PeerTemp" : meName}</strong>
+          <span className="cp-msg-time">{time}</span>
+        </div>
+        <div className="cp-msg-bubble">{msg.text}</div>
+      </div>
     </div>
   );
 }

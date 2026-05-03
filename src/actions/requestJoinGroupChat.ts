@@ -55,6 +55,7 @@ export const requestJoinGroupChat = new Action({
             organizationId: gc.organizationId,
             userId,
             workRole: input.workRole,
+            leaderFlag: false,
             joinedAt: new Date().toISOString(),
             status: "active",
           },
@@ -66,7 +67,7 @@ export const requestJoinGroupChat = new Action({
         what: gc.title,
         conversationId: input.conversationId,
       });
-      return { status: "joined" };
+      return { status: "joined" as const };
     }
 
     const created = await JoinRequestsTable.createRows({
@@ -78,11 +79,13 @@ export const requestJoinGroupChat = new Action({
           requesterTemperature: temp,
           status: "pending",
           justification: input.justification,
+          decidedBy: undefined,
+          decidedAt: undefined,
           requestedAt: new Date().toISOString(),
         },
       ],
     });
     const joinRequestId = String((created as any)?.rows?.[0]?.id ?? "");
-    return { status: "pending", joinRequestId };
+    return { status: "pending" as const, joinRequestId };
   },
 });
